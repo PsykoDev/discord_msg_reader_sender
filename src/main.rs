@@ -1,19 +1,14 @@
-use std::{
-    string::ToString,
-    sync::Arc,
-    time::Duration,
-};
+use std::{string::ToString, sync::Arc, time::Duration};
 use std::collections::HashMap;
 
 use futures_util::{SinkExt, StreamExt};
 use reqwest;
 use reqwest::Client;
 use tokio;
-use tokio::fs::{File, OpenOptions};
-use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tokio::sync::mpsc::Sender;
+use tokio::task::JoinHandle;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 use tungstenite::Message;
 use url::Url;
@@ -32,7 +27,7 @@ mod ready;
 
 const AUTOREPLY: bool = false;
 const MSG_TO_SEND: &str = "Rust: LOVE";
-const TOKEN: &str= "";
+const TOKEN: &str = "";
 const EMOJI: &str = "%F0%9F%99%80";
 const ME: &str = "<@204972632863539201>";
 const CHANNEL_ID: i64 = 588028300690063469; //1062074714186592316
@@ -82,40 +77,29 @@ async fn receive_messages(socket: Arc<Mutex<WebSocketStream<MaybeTlsStream<TcpSt
                         println!("Server found {}", guild_id.len());
                         println!("Channel mapped {}", channel_id.len());
                     }
-                    Err(e) => {
+                    Err(_) => {
                         //println!("error {e}");
                         match serde_json::from_str::<MsgCreated>(message.to_text().unwrap()) {
-                        Ok(msg) => {
-                            if msg.d.guild_id.is_none() {
-                                if msg.d.content.contains(ME) {
-                                    dm_ping!("[DM] {}: {}", msg.d.author.global_name, msg.d.content);
+                            Ok(msg) => {
+                                if msg.d.guild_id.is_none() {
+                                    if msg.d.content.contains(ME) {
+                                        dm_ping!("[DM] {}: {}", msg.d.author.global_name, msg.d.content);
+                                    } else {
+                                        dm_msg!("[DM] {}: {}", msg.d.author.global_name, msg.d.content);
+                                    }
                                 } else {
-                                    dm_msg!("[DM] {}: {}", msg.d.author.global_name, msg.d.content);
-                                }
-                            } else {
-                                if msg.d.content.contains(ME) {
-                                    ping!("{} > {} | {}: {}", guild_id.get(&msg.d.guild_id.unwrap()).unwrap(),channel_id.get(&msg.d.channel_id).unwrap(), msg.d.author.global_name, msg.d.content);
-                                } else {
-                                    msg!("{} > {} | {}: {}", guild_id.get(&msg.d.guild_id.unwrap()).unwrap(),channel_id.get(&msg.d.channel_id).unwrap(), msg.d.author.global_name, msg.d.content);
-                                    tx.send((msg.d.id, msg.d.channel_id)).await.unwrap();
+                                    if msg.d.content.contains(ME) {
+                                        ping!("{} > {}\n\t{}: {}", guild_id.get(&msg.d.guild_id.unwrap()).unwrap(),channel_id.get(&msg.d.channel_id).unwrap(), msg.d.author.global_name, msg.d.content);
+                                    } else {
+                                        msg!("{} > {}\n\t{}: {}", guild_id.get(&msg.d.guild_id.unwrap()).unwrap(),channel_id.get(&msg.d.channel_id).unwrap(), msg.d.author.global_name, msg.d.content);
+                                        tx.send((msg.d.id, msg.d.channel_id)).await.unwrap();
+                                    }
                                 }
                             }
+                            Err(_) => {}
                         }
-                        Err(_) => {}
-                    }}
+                    }
                 }
-
-
-
-                // println!("Received message: {:?}", message.to_string()); // print all msg
-                // let mut file = OpenOptions::new()
-                //     .write(true)
-                //     .append(true)
-                //     .open("data.json")
-                //     .await
-                //     .unwrap();
-                // let data = format!("{}\n", message.to_string());
-                // file.write_all(data.as_ref()).await.expect("");
             }
             Err(err) => {
                 error!("Error receiving message: {:?}", err);
@@ -135,26 +119,23 @@ async fn main() {
     let hb_interval = Duration::from_millis(15000);
 
     let socket_clone = socket.clone();
+    let mut thread: Vec<JoinHandle<()>> = Vec::new();
     let (tx, mut rx) = mpsc::channel(16);
     info!("Send heart beat");
-    tokio::spawn(heart_beat(socket_clone, hb_interval));
+    thread.push(tokio::spawn(heart_beat(socket_clone, hb_interval)));
     info!("Send payload");
-    tokio::spawn(payload(socket.clone(), TOKEN));
+    thread.push(tokio::spawn(payload(socket.clone(), TOKEN)));
     info!("Receive messages in progress");
-    tokio::spawn(receive_messages(socket.clone(), tx));
+    thread.push(tokio::spawn(receive_messages(socket.clone(), tx)));
 
+    let _ = futures::future::join_all(thread).await;
 
     let client = Client::new();
 
-    loop {
-
-    }
-
     while AUTOREPLY {
-
         let (msg_id, chan_id) = rx.recv().await.unwrap();
 
-        let mut last_message_id: i64 = msg_id.parse::<i64>().unwrap();
+        let last_message_id: i64 = msg_id.parse::<i64>().unwrap();
 
         let payload = Payload::build_payload(format!("{}", MSG_TO_SEND));
         let serialized = serde_json::to_string(&payload).unwrap();
@@ -171,6 +152,5 @@ async fn main() {
             }
             Err(e) => println!("{}", e),
         }
-
     }
 }
