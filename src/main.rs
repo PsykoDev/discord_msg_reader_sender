@@ -1,5 +1,6 @@
 use std::{string::ToString, sync::Arc, time::Duration};
 use std::collections::HashMap;
+use std::fmt::format;
 
 use futures_util::{SinkExt, StreamExt};
 use rand::{RngCore, thread_rng};
@@ -27,7 +28,7 @@ mod utils;
 mod ready;
 
 const AUTOREPLY: bool = false;
-const MSG_TO_SEND: &str = "Rust: LOVE";
+const MSG_TO_SEND: &str = "Rust: :scream_cat:";
 const TOKEN: &str = "";
 const EMOJI: &str = "%F0%9F%99%80";
 const ME: &str = "<@204972632863539201>";
@@ -105,23 +106,25 @@ async fn receive_messages(socket: Arc<Mutex<WebSocketStream<MaybeTlsStream<TcpSt
                                     let g_id = guild_id.get(&msg.d.guild_id.unwrap()).unwrap();
                                     let c_id = channel_id.get(&msg.d.channel_id).unwrap();
                                     let c_id_parse = msg.d.channel_id.parse::<i64>().unwrap();
+                                    let name = format!("{}#{}", msg.d.author.username, msg.d.author.discriminator);
+                                    let content = msg.d.content;
                                     if last_channel_id != c_id_parse {
-                                        if msg.d.content.contains(ME) {
-                                            ping!("\n{} > {}\n\t{}: {}", g_id, c_id, msg.d.author.global_name, msg.d.content);
+                                        if content.contains(ME) {
+                                            ping!("\n{} > {}\n\t{}: {}", g_id, c_id, name, content);
                                             last_channel_id = c_id_parse;
                                         } else {
-                                            msg!("\n{} > {}\n\t{}: {}", g_id,c_id, msg.d.author.global_name, msg.d.content);
+                                            msg!("\n{} > {}\n\t{}: {}", g_id,c_id, name, content);
                                             last_channel_id = c_id_parse;
                                             tx.send((msg.d.id, msg.d.channel_id)).await.unwrap();
                                         }
                                     }else {
-                                        if msg.d.content.contains(ME) {
-                                            ping!("\t{}: {}", msg.d.author.global_name, msg.d.content);
+                                        if content.contains(ME) {
+                                            ping!("\t{}: {}", name, content);
                                             last_channel_id = c_id_parse;
                                         } else {
-                                            msg!("\t{}: {}", msg.d.author.global_name, msg.d.content);
+                                            msg!("\t{}: {}", name, content);
                                             last_channel_id = c_id_parse;
-                                            tx.send((msg.d.id, msg.d.channel_id)).await.unwrap();
+                                            tx.send((msg.d.id, content)).await.unwrap();
                                         }
                                     }
 
@@ -163,22 +166,25 @@ async fn main() {
 
     let client = Client::new();
 
+    // https://discord.com/api/v9/users/204972632863539201/profile
     while AUTOREPLY {
         let (msg_id, chan_id) = rx.recv().await.unwrap();
 
         let last_message_id: i64 = msg_id.parse::<i64>().unwrap();
 
-        let payload = Payload::build_payload(format!("{}", MSG_TO_SEND));
+        let payload = Payload::build_payload(MSG_TO_SEND.to_string());
         let serialized = serde_json::to_string(&payload).unwrap();
 
         let x = [
             data::request::Request::SendMsg { channel: CHANNEL_ID, payload: serialized },
             data::request::Request::SendReaction { channel: chan_id.parse::<i64>().unwrap(), message: last_message_id, emoji: EMOJI.to_string() },
+            data::request::Request::GetProfile {user_id: 397713052688187403},
         ];
 
-        match data::send_data(&x.first().unwrap(), &client, "https://discord.com/api/v9/channels".to_string(), TOKEN).await {
+        match data::send_data(&x[0], &client, "https://discord.com/api/v9".to_string(), TOKEN).await {
             Ok(data) => {
-                let _x = serde_json::from_str::<MsgResponse>(&data.text().await.unwrap());
+                println!("{}", data.text().await.unwrap());
+                //let _x = serde_json::from_str::<MsgResponse>(&data.text().await.unwrap());
                 //last_message_id = x.unwrap().id.parse::<i64>().unwrap();
             }
             Err(e) => println!("{}", e),
