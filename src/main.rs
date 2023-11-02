@@ -2,6 +2,7 @@ use std::{string::ToString, sync::Arc, time::Duration};
 use std::collections::HashMap;
 
 use futures_util::{SinkExt, StreamExt};
+use rand::{RngCore, thread_rng};
 use reqwest;
 use reqwest::Client;
 use tokio;
@@ -32,13 +33,25 @@ const EMOJI: &str = "%F0%9F%99%80";
 const ME: &str = "<@204972632863539201>";
 const CHANNEL_ID: i64 = 588028300690063469; //1062074714186592316
 
+/*
+
+{"op":4,"d":{"guild_id":null,"channel_id":null,"self_mute":false,"self_deaf":false,"self_video":false,"flags":2}} // self action
+
+{"op":1,"d":0++} // hb
+
+{"op":14,"d":{"guild_id":"854214724169236480","typing":true,"threads":true,"activities":true,"members":[],"channels":{},"thread_member_lists":[]}} // typing info
+
+{"op":8,"d":{"guild_id":["854214724169236480"],"user_ids":["830050566667239475","796868686970880000"],"presences":false}} // user_ids can see channel selected
+
+ */
+
 async fn heart_beat(socket: Arc<Mutex<WebSocketStream<MaybeTlsStream<TcpStream>>>>, hb: Duration) {
     let mut interval = tokio::time::interval(hb);
     loop {
         interval.tick().await;
 
         let mut socket = socket.lock().await;
-        let message = Message::text(r#"{"op": 1, "d": null}"#);
+        let message = Message::text(format!(r#"{{"op": 1, "d": {}}}"#, thread_rng().next_u32()));
 
         if let Err(err) = socket.send(message).await {
             error!("Error sending heartbeat: {:?}", err);
@@ -61,6 +74,7 @@ async fn payload(socket: Arc<Mutex<WebSocketStream<MaybeTlsStream<TcpStream>>>>,
 async fn receive_messages(socket: Arc<Mutex<WebSocketStream<MaybeTlsStream<TcpStream>>>>, tx: Sender<(String, String)>) {
     let mut guild_id = HashMap::new();
     let mut channel_id = HashMap::new();
+    let mut last_channel_id = 0;
     loop {
         let msg = socket.lock().await.next().await.unwrap();
 
@@ -88,12 +102,29 @@ async fn receive_messages(socket: Arc<Mutex<WebSocketStream<MaybeTlsStream<TcpSt
                                         dm_msg!("[DM] {}: {}", msg.d.author.global_name, msg.d.content);
                                     }
                                 } else {
-                                    if msg.d.content.contains(ME) {
-                                        ping!("{} > {}\n\t{}: {}", guild_id.get(&msg.d.guild_id.unwrap()).unwrap(),channel_id.get(&msg.d.channel_id).unwrap(), msg.d.author.global_name, msg.d.content);
-                                    } else {
-                                        msg!("{} > {}\n\t{}: {}", guild_id.get(&msg.d.guild_id.unwrap()).unwrap(),channel_id.get(&msg.d.channel_id).unwrap(), msg.d.author.global_name, msg.d.content);
-                                        tx.send((msg.d.id, msg.d.channel_id)).await.unwrap();
+                                    let g_id = guild_id.get(&msg.d.guild_id.unwrap()).unwrap();
+                                    let c_id = channel_id.get(&msg.d.channel_id).unwrap();
+                                    let c_id_parse = msg.d.channel_id.parse::<i64>().unwrap();
+                                    if last_channel_id != c_id_parse {
+                                        if msg.d.content.contains(ME) {
+                                            ping!("\n{} > {}\n\t{}: {}", g_id, c_id, msg.d.author.global_name, msg.d.content);
+                                            last_channel_id = c_id_parse;
+                                        } else {
+                                            msg!("\n{} > {}\n\t{}: {}", g_id,c_id, msg.d.author.global_name, msg.d.content);
+                                            last_channel_id = c_id_parse;
+                                            tx.send((msg.d.id, msg.d.channel_id)).await.unwrap();
+                                        }
+                                    }else {
+                                        if msg.d.content.contains(ME) {
+                                            ping!("\t{}: {}", msg.d.author.global_name, msg.d.content);
+                                            last_channel_id = c_id_parse;
+                                        } else {
+                                            msg!("\t{}: {}", msg.d.author.global_name, msg.d.content);
+                                            last_channel_id = c_id_parse;
+                                            tx.send((msg.d.id, msg.d.channel_id)).await.unwrap();
+                                        }
                                     }
+
                                 }
                             }
                             Err(_) => {}
@@ -111,12 +142,12 @@ async fn receive_messages(socket: Arc<Mutex<WebSocketStream<MaybeTlsStream<TcpSt
 
 #[tokio::main]
 async fn main() {
-    let url = Url::parse("wss://gateway.discord.gg/?v=9&encording=json").unwrap();
+    let url = Url::parse("wss://gateway.discord.gg/?encoding=json&v=9").unwrap();
 
     let (socket, _) = connect_async(url).await.expect("can't connect");
     let socket = Arc::new(Mutex::new(socket));
 
-    let hb_interval = Duration::from_millis(15000);
+    let hb_interval = Duration::from_secs(40);
 
     let socket_clone = socket.clone();
     let mut thread: Vec<JoinHandle<()>> = Vec::new();
