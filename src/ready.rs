@@ -4,6 +4,15 @@ use serde_json::Value;
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct Ready {
+    pub t: String,
+    pub s: i64,
+    pub op: i64,
+}
+
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Root {
     pub t: String,
     pub s: i64,
@@ -492,7 +501,7 @@ pub struct Activity {
 #[serde(rename_all = "camelCase")]
 pub struct Assets {
     #[serde(rename = "large_image")]
-    pub large_image: String,
+    pub large_image: Option<String>,
     #[serde(rename = "large_text")]
     pub large_text: Option<String>,
 }
